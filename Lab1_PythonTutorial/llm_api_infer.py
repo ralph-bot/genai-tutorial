@@ -1,19 +1,19 @@
 import requests
 
+# How many person have the openai api key or deepseek api key ? 
 url = "https://api.siliconflow.cn/v1/chat/completions"
 
 payload = {
-    "model": "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B",
+    "model": "deepseek-ai/DeepSeek-V3.2-Exp",
     "messages": [
         {
             "role": "user",
-            "content": "What opportunities and challenges will the Chinese large model industry face in 2025?"
+            "content": "当前最好的大模型是哪个？"
+            #"content": "What opportunities and challenges will the Chinese large model industry face in 2025? "
         }
     ],
     "stream": False,
     "max_tokens": 512,
-    "enable_thinking": False,
-    "thinking_budget": 4096,
     "min_p": 0.05,
     "stop": None,
     "temperature": 0.7,
@@ -35,7 +35,7 @@ payload = {
     ]
 }
 headers = {
-    "Authorization": "Bearer <token>",
+    "Authorization": "Bearer xxx",
     "Content-Type": "application/json"
 }
 

@@ -6,6 +6,8 @@ from sklearn.datasets import load_digits
 from sklearn.model_selection import train_test_split
 import numpy as np
 import time
+import math
+import torch.nn.functional as F
 
 # 设置设备
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -63,9 +65,115 @@ class CNN(nn.Module):
         return nn.functional.log_softmax(x, dim=1)  # 对数Softmax激活函数
 
 # 初始化模型、损失函数和优化器
-model = CNN().to(device)
+# 定义RNN模型
+class RNN(nn.Module):
+    def __init__(self, input_size=8, hidden_size=128, num_layers=2, num_classes=10):
+        super(RNN, self).__init__()
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        
+        # LSTM层
+        self.rnn = nn.RNN(input_size, hidden_size, num_layers, batch_first=True)
+        # # LSTM层
+        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
+        
+        # 全连接层
+        self.fc = nn.Linear(hidden_size, num_classes)
+        
+    def forward(self, x):
+        # 输入形状: (batch_size, 1, 8, 8)
+        # 重塑为序列形式: (batch_size, 8, 8)
+        batch_size = x.size(0)
+        x = x.squeeze(1)  # 移除通道维度
+        #print("x shape is ",x.shape)
+        
+        # 初始化隐藏状态
+        h0 = torch.zeros(self.num_layers, batch_size, self.hidden_size).to(x.device)
+        c0 = torch.zeros(self.num_layers, batch_size, self.hidden_size).to(x.device)
+        
+        # LSTM前向传播
+        out, _ = self.lstm(x, (h0, c0))
+        #out = self.rnn(x,(h0,c0))
+        
+        # 只使用最后一个时间步的输出
+        out = self.fc(out[:, -1, :])
+        return nn.functional.log_softmax(out, dim=1)
+
+# 定义Transformer模型
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model, max_len=8*8):
+        super(PositionalEncoding, self).__init__()
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        self.register_buffer('pe', pe)
+        
+    def forward(self, x):
+        # x: [batch_size, seq_len, feature_dim]
+        return x + self.pe[:x.size(1), :]
+
+class TransformerModel(nn.Module):
+    def __init__(self, input_dim=8, d_model=64, nhead=4, num_layers=2, num_classes=10, dropout=0.1):
+        super(TransformerModel, self).__init__()
+        self.d_model = d_model
+        
+        # 嵌入层：将输入特征转换为d_model维度
+        self.embedding = nn.Linear(input_dim, d_model)
+        
+        # 位置编码
+        self.pos_encoder = PositionalEncoding(d_model)
+        
+        # Transformer编码器层
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=nhead,
+            dim_feedforward=256,
+            dropout=dropout,
+            batch_first=True
+        )
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        
+        # 输出层
+        self.fc = nn.Linear(d_model, num_classes)
+        
+    def forward(self, x):
+        # 输入x: [batch_size, 1, 8, 8]
+        batch_size = x.size(0)
+        
+        # 重塑为序列形式: [batch_size, seq_len, feature_dim]
+        x = x.squeeze(1)  # [batch_size, 8, 8]
+        x = x.reshape(batch_size, -1, 8)  # [batch_size, 8, 8] (seq_len=8, feature_dim=8)
+        
+        # 嵌入
+        x = self.embedding(x)  # [batch_size, seq_len, d_model]
+        
+        # 应用位置编码
+        x = self.pos_encoder(x)
+        
+        # 通过Transformer编码器
+        x = self.transformer_encoder(x)  # [batch_size, seq_len, d_model]
+        
+        # 全局平均池化
+        x = x.mean(dim=1)  # [batch_size, d_model]
+        
+        # 输出层
+        x = self.fc(x)  # [batch_size, num_classes]
+        
+        return F.log_softmax(x, dim=1)
+
+# 初始化RNN模型
+model = TransformerModel().to(device)
+# criterion = nn.NLLLoss()
+# optimizer = optim.Adam(model.parameters(), lr=0.001)
+
+#model = CNN().to(device)
 criterion = nn.NLLLoss()  # 负对数似然损失
 optimizer = optim.Adam(model.parameters(), lr=0.001)
+#criterion = CustomLoss(lambda_1=2.0, lambda_9=-0.5)  # 调整权重参数
+
+
 
 # 训练模型
 def train(epochs):
@@ -75,7 +183,7 @@ def train(epochs):
         running_loss = 0.0
         for batch_idx, (data, target) in enumerate(train_loader):
             data, target = data.to(device), target.to(device)
-            
+            #print(data.shape) # [64,1,8,8]
             optimizer.zero_grad()
             output = model(data)
             loss = criterion(output, target)
@@ -106,12 +214,6 @@ def test():
 
 # 训练和评估
 print("开始训练CNN模型...")
-train(epochs=10)  # 由于数据集较小，增加训练轮次
+train(epochs=20)  # 由于数据集较小，增加训练轮次
 print("\n开始评估模型...")
 test()    
-
-# only save the weight 
-torch.save(model, 'model.pth')
-# 保存参数
-torch.save(model.state_dict(), 'model_weights.pth')
-# we visualzie it in https://netron.app/
